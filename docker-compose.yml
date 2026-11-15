@@ -1,0 +1,38 @@
+
+services:
+  middleware:
+    build: ./middleware
+    container_name: middleware
+    ports:
+      - "8000:8000"
+    depends_on:
+      - orders
+      - inventory
+      - rabbitmq
+
+  orders:
+    build: ./services/orders
+    container_name: orders
+    ports:
+      - "8001:8001"
+    depends_on:
+      - rabbitmq
+
+  inventory:
+    build: ./services/inventory
+    container_name: inventory
+    ports:
+      - "8002:8002"
+
+  notifications:
+    build: ./services/notifications
+    container_name: notifications
+    depends_on:
+      - rabbitmq
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
