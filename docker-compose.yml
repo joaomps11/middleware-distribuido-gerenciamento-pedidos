@@ -5,30 +5,58 @@ services:
     container_name: middleware
     ports:
       - "8000:8000"
+    environment:
+      ORDERS_URL: http://orders:8001
+      SECRET_KEY: chave-academica-middleware-2026
     depends_on:
-      - orders
-      - inventory
-      - rabbitmq
-
+      orders:
+        condition: service_healthy
+      inventory:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
   orders:
     build: ./services/orders
     container_name: orders
     ports:
       - "8001:8001"
+    environment:
+      INVENTORY_URL: http://inventory:8002
+      RABBITMQ_HOST: rabbitmq
     depends_on:
-      - rabbitmq
+      inventory:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   inventory:
     build: ./services/inventory
     container_name: inventory
     ports:
       - "8002:8002"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   notifications:
     build: ./services/notifications
     container_name: notifications
+    environment:
+      RABBITMQ_HOST: rabbitmq
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -36,3 +64,9 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped

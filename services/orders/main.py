@@ -1,8 +1,11 @@
 
+import json
 import os
+import time
 from itertools import count
 
 import httpx
+import pika
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -12,13 +15,14 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Endereço do Inventory Service
 INVENTORY_URL = os.getenv(
     "INVENTORY_URL",
     "http://127.0.0.1:8002"
 )
 
-# Armazenamento simulado dos pedidos
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
+QUEUE_NAME = "orders_queue"
+
 orders = {}
 order_counter = count(1)
 
@@ -26,6 +30,71 @@ order_counter = count(1)
 class OrderRequest(BaseModel):
     product_id: int = Field(gt=0)
     quantity: int = Field(gt=0)
+
+
+def publish_order_event(order):
+    event = {
+        "event": "order_created",
+        "order_id": order["id"],
+        "product": order["product"],
+        "quantity": order["quantity"],
+        "total": order["total"]
+    }
+
+    for attempt in range(5):
+        connection = None
+
+        try:
+            connection = pika.BlockingConnection(
+                pika.ConnectionParameters(
+                    host=RABBITMQ_HOST,
+                    heartbeat=60,
+                    socket_timeout=5
+                )
+            )
+
+            channel = connection.channel()
+
+            channel.queue_declare(
+                queue=QUEUE_NAME,
+                durable=True
+            )
+
+            channel.basic_publish(
+                exchange="",
+                routing_key=QUEUE_NAME,
+                body=json.dumps(event),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,
+                    content_type="application/json"
+                )
+            )
+
+            print(
+                f"Evento do pedido {order['id']} enviado ao RabbitMQ.",
+                flush=True
+            )
+
+            return True
+
+        except (pika.exceptions.AMQPConnectionError, OSError) as error:
+            print(
+                f"Tentativa {attempt + 1}/5: RabbitMQ indisponível: {error}",
+                flush=True
+            )
+
+            time.sleep(2)
+
+        finally:
+            if connection is not None and connection.is_open:
+                connection.close()
+
+    print(
+        f"Não foi possível publicar o evento do pedido {order['id']}.",
+        flush=True
+    )
+
+    return False
 
 
 @app.get("/")
@@ -118,10 +187,17 @@ def create_order(request: OrderRequest):
         "quantity": request.quantity,
         "unit_price": product["price"],
         "total": product["price"] * request.quantity,
-        "status": "confirmed"
+        "status": "confirmed",
+        "notification_status": "pending"
     }
 
     orders[order_id] = order
+
+    # Publica o evento no RabbitMQ
+    event_sent = publish_order_event(order)
+
+    if event_sent:
+        order["notification_status"] = "sent"
 
     return {
         "message": "Pedido criado com sucesso.",
