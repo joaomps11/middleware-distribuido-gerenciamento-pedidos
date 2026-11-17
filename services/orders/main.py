@@ -1,12 +1,14 @@
 
 import json
+import logging
 import os
 import time
+import uuid
 from itertools import count
 
 import httpx
 import pika
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 app = FastAPI(
@@ -26,19 +28,66 @@ QUEUE_NAME = "orders_queue"
 orders = {}
 order_counter = count(1)
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("orders")
+
+
+def log_event(event, **details):
+    logger.info(json.dumps({
+        "event": event,
+        **details
+    }, ensure_ascii=False))
+
 
 class OrderRequest(BaseModel):
     product_id: int = Field(gt=0)
     quantity: int = Field(gt=0)
 
 
-def publish_order_event(order):
+@app.middleware("http")
+async def observability_middleware(request: Request, call_next):
+    correlation_id = (
+        request.headers.get("X-Correlation-ID")
+        or str(uuid.uuid4())
+    )
+
+    request.state.correlation_id = correlation_id
+    start_time = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        log_event(
+            "request_error",
+            correlation_id=correlation_id,
+            method=request.method,
+            path=request.url.path
+        )
+        raise
+
+    latency_ms = (time.perf_counter() - start_time) * 1000
+
+    log_event(
+        "http_request",
+        correlation_id=correlation_id,
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        latency_ms=round(latency_ms, 2)
+    )
+
+    response.headers["X-Correlation-ID"] = correlation_id
+    return response
+
+
+def publish_order_event(order, correlation_id):
     event = {
         "event": "order_created",
         "order_id": order["id"],
         "product": order["product"],
         "quantity": order["quantity"],
-        "total": order["total"]
+        "total": order["total"],
+        "correlation_id": correlation_id
     }
 
     for attempt in range(5):
@@ -70,17 +119,23 @@ def publish_order_event(order):
                 )
             )
 
-            print(
-                f"Evento do pedido {order['id']} enviado ao RabbitMQ.",
-                flush=True
+            log_event(
+                "order_event_published",
+                order_id=order["id"],
+                correlation_id=correlation_id
             )
 
             return True
 
-        except (pika.exceptions.AMQPConnectionError, OSError) as error:
-            print(
-                f"Tentativa {attempt + 1}/5: RabbitMQ indisponível: {error}",
-                flush=True
+        except (
+            pika.exceptions.AMQPConnectionError,
+            OSError
+        ) as error:
+            log_event(
+                "rabbitmq_publish_retry",
+                attempt=attempt + 1,
+                correlation_id=correlation_id,
+                error=str(error)
             )
 
             time.sleep(2)
@@ -89,9 +144,10 @@ def publish_order_event(order):
             if connection is not None and connection.is_open:
                 connection.close()
 
-    print(
-        f"Não foi possível publicar o evento do pedido {order['id']}.",
-        flush=True
+    log_event(
+        "order_event_publish_failed",
+        order_id=order["id"],
+        correlation_id=correlation_id
     )
 
     return False
@@ -115,12 +171,18 @@ def health():
 
 
 @app.post("/orders", status_code=201)
-def create_order(request: OrderRequest):
+def create_order(request: OrderRequest, http_request: Request):
+    correlation_id = http_request.state.correlation_id
+
+    inventory_headers = {
+        "X-Correlation-ID": correlation_id
+    }
 
     # Consulta o produto no Inventory
     try:
         product_response = httpx.get(
             f"{INVENTORY_URL}/products/{request.product_id}",
+            headers=inventory_headers,
             timeout=5.0
         )
 
@@ -149,6 +211,7 @@ def create_order(request: OrderRequest):
         stock_response = httpx.post(
             f"{INVENTORY_URL}/products/{request.product_id}/reserve",
             json={"quantity": request.quantity},
+            headers=inventory_headers,
             timeout=5.0
         )
 
@@ -188,13 +251,22 @@ def create_order(request: OrderRequest):
         "unit_price": product["price"],
         "total": product["price"] * request.quantity,
         "status": "confirmed",
-        "notification_status": "pending"
+        "notification_status": "pending",
+        "correlation_id": correlation_id
     }
 
     orders[order_id] = order
 
+    log_event(
+        "order_created",
+        order_id=order_id,
+        product=product["name"],
+        quantity=request.quantity,
+        correlation_id=correlation_id
+    )
+
     # Publica o evento no RabbitMQ
-    event_sent = publish_order_event(order)
+    event_sent = publish_order_event(order, correlation_id)
 
     if event_sent:
         order["notification_status"] = "sent"

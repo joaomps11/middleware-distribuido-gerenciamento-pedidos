@@ -1,5 +1,10 @@
 
-from fastapi import FastAPI, HTTPException
+import json
+import logging
+import time
+import uuid
+
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 app = FastAPI(
@@ -7,6 +12,9 @@ app = FastAPI(
     description="Serviço responsável pelo gerenciamento de estoque.",
     version="1.0.0"
 )
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("inventory")
 
 # Estoque inicial simulado em memória
 products = {
@@ -31,8 +39,53 @@ products = {
 }
 
 
+def log_event(event, **details):
+    logger.info(json.dumps({
+        "event": event,
+        **details
+    }, ensure_ascii=False))
+
+
+@app.middleware("http")
+async def observability_middleware(request: Request, call_next):
+    correlation_id = (
+        request.headers.get("X-Correlation-ID")
+        or str(uuid.uuid4())
+    )
+
+    start_time = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        log_event(
+            "request_error",
+            correlation_id=correlation_id,
+            method=request.method,
+            path=request.url.path
+        )
+        raise
+
+    latency_ms = (time.perf_counter() - start_time) * 1000
+
+    log_event(
+        "http_request",
+        correlation_id=correlation_id,
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        latency_ms=round(latency_ms, 2)
+    )
+
+    response.headers["X-Correlation-ID"] = correlation_id
+    return response
+
+
 class StockRequest(BaseModel):
-    quantity: int = Field(gt=0, description="Quantidade que será reservada")
+    quantity: int = Field(
+        gt=0,
+        description="Quantidade que será reservada"
+    )
 
 
 @app.get("/")
@@ -73,7 +126,15 @@ def get_product(product_id: int):
 
 
 @app.post("/products/{product_id}/reserve")
-def reserve_stock(product_id: int, request: StockRequest):
+def reserve_stock(
+    product_id: int,
+    request: StockRequest,
+    http_request: Request
+):
+    correlation_id = http_request.headers.get(
+        "X-Correlation-ID"
+    )
+
     product = products.get(product_id)
 
     if product is None:
@@ -83,12 +144,28 @@ def reserve_stock(product_id: int, request: StockRequest):
         )
 
     if product["stock"] < request.quantity:
+        log_event(
+            "stock_reservation_failed",
+            product_id=product_id,
+            requested_quantity=request.quantity,
+            correlation_id=correlation_id
+        )
+
         raise HTTPException(
             status_code=400,
             detail="Estoque insuficiente."
         )
 
     product["stock"] -= request.quantity
+
+    log_event(
+        "stock_reserved",
+        product_id=product_id,
+        product=product["name"],
+        quantity=request.quantity,
+        remaining_stock=product["stock"],
+        correlation_id=correlation_id
+    )
 
     return {
         "message": "Estoque reservado com sucesso.",
