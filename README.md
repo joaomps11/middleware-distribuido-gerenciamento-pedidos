@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/35091904/README.md)
 # Middleware Distribuído — Gerenciamento de Pedidos
 
 Projeto acadêmico da disciplina de Sistemas Distribuídos (2º GQ) — Universidade Católica de Pernambuco (UNICAP).
