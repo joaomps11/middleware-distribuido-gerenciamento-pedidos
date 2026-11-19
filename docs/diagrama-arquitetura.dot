@@ -1,0 +1,17 @@
+digraph middleware {
+  graph [rankdir=LR, bgcolor="white", pad="0.28", nodesep="0.50", ranksep="0.72", splines=polyline, fontname="DejaVu Sans", label="Middleware distribuído — visão de comunicação", labelloc=t, fontsize=20, fontcolor="#172D4A"];
+  node [fontname="DejaVu Sans", fontsize=11, shape=box, style="rounded,filled", color="#C9D6E3", penwidth=1.4, fillcolor="#F2F6FC", fontcolor="#17304E", margin="0.22,0.14"];
+  edge [fontname="DejaVu Sans", fontsize=9.5, color="#4E6680", fontcolor="#304963", arrowsize=0.8, penwidth=1.4];
+  client [label="Cliente HTTP\nSwagger / curl", fillcolor="#E8F0FF"];
+  middleware [label="Middleware | :8000\nJWT · RBAC · métricas\nCorrelation ID", fillcolor="#DDEBFF", color="#638ECD"];
+  orders [label="Orders | :8001\nPedidos em memória\nProdutor de eventos", fillcolor="#E2F3E7", color="#69A97B"];
+  inventory [label="Inventory | :8002\nProdutos e estoque\nem memória", fillcolor="#E2F3E7", color="#69A97B"];
+  rabbit [label="RabbitMQ | :5672\nFila: orders_queue", shape=cylinder, fillcolor="#FFF0D6", color="#D3A34D"];
+  notify [label="Notifications\nWorker consumidor\nLogs + ack", fillcolor="#FFF0D6", color="#D3A34D"];
+  {rank=same;inventory;rabbit;}
+  client -> middleware [label="REST / token"];
+  middleware -> orders [label="REST /orders"];
+  orders -> inventory [label="REST /products\nconsulta e reserva"];
+  orders -> rabbit [label="publica order_created", color="#B67A1A", fontcolor="#966210"];
+  rabbit -> notify [label="consome evento", color="#B67A1A", fontcolor="#966210"];
+}
