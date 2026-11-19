@@ -24,6 +24,8 @@ INVENTORY_URL = os.getenv(
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 QUEUE_NAME = "orders_queue"
+RABBITMQ_MAX_ATTEMPTS = int(os.getenv("RABBITMQ_MAX_ATTEMPTS", "5"))
+RABBITMQ_BACKOFF_SECONDS = float(os.getenv("RABBITMQ_BACKOFF_SECONDS", "0.5"))
 
 orders = {}
 order_counter = count(1)
@@ -90,7 +92,7 @@ def publish_order_event(order, correlation_id):
         "correlation_id": correlation_id
     }
 
-    for attempt in range(5):
+    for attempt in range(RABBITMQ_MAX_ATTEMPTS):
         connection = None
 
         try:
@@ -98,7 +100,10 @@ def publish_order_event(order, correlation_id):
                 pika.ConnectionParameters(
                     host=RABBITMQ_HOST,
                     heartbeat=60,
-                    socket_timeout=5
+                    socket_timeout=3,
+                    stack_timeout=5,
+                    blocked_connection_timeout=5,
+                    connection_attempts=1
                 )
             )
 
@@ -138,7 +143,9 @@ def publish_order_event(order, correlation_id):
                 error=str(error)
             )
 
-            time.sleep(2)
+            if attempt < RABBITMQ_MAX_ATTEMPTS - 1:
+                wait_seconds = RABBITMQ_BACKOFF_SECONDS * (2 ** attempt)
+                time.sleep(wait_seconds)
 
         finally:
             if connection is not None and connection.is_open:

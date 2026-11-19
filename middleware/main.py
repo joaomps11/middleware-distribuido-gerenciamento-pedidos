@@ -23,6 +23,7 @@ ORDERS_URL = os.getenv("ORDERS_URL", "http://127.0.0.1:8001")
 SECRET_KEY = os.getenv("SECRET_KEY", "chave-de-desenvolvimento-alterar")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_MINUTES = 60
+ORDERS_TIMEOUT_SECONDS = float(os.getenv("ORDERS_TIMEOUT_SECONDS", "60"))
 
 # Usuários simulados para demonstração
 USERS = {
@@ -191,7 +192,7 @@ async def forward_to_orders(request: Request, path: str):
     url = f"{ORDERS_URL}{path}"
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=ORDERS_TIMEOUT_SECONDS) as client:
             service_response = await client.request(
                 method=request.method,
                 url=url,

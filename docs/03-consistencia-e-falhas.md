@@ -11,8 +11,8 @@
 
 ## Mecanismos presentes no código
 
-1. Timeout HTTP de 10 s nas chamadas Middleware -> Orders e de 5 s nas chamadas Orders -> Inventory.
-2. Até cinco tentativas de conexão/publicação RabbitMQ com intervalo fixo de dois segundos; **não** é backoff exponencial.
+1. Timeout HTTP configurável por `ORDERS_TIMEOUT_SECONDS` (60 s no Compose) nas chamadas Middleware -> Orders; Orders -> Inventory continua com 5 s por chamada.
+2. Até cinco tentativas de conexão/publicação RabbitMQ com backoff exponencial de 0,5, 1, 2 e 4 segundos entre tentativas, configurável por `RABBITMQ_MAX_ATTEMPTS` e `RABBITMQ_BACKOFF_SECONDS`. As tentativas e o tempo de resposta ainda precisam ser testados na prática.
 3. Notifications tenta reconectar a RabbitMQ na **conexão inicial**, em intervalos de cinco segundos.
 4. Healthchecks no Compose para Orders, Inventory e RabbitMQ, e política `restart: unless-stopped` nos cinco serviços.
 5. Mensagens persistentes e fila durável, além de `ack` para mensagem consumida.

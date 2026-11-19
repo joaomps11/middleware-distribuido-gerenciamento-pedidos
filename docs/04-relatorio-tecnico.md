@@ -36,7 +36,7 @@ Como se trata de um ambiente de demonstração, as contas de teste e a chave JWT
 
 O projeto registra logs estruturados e usa `X-Correlation-ID` para acompanhar uma requisição entre os serviços. O Middleware também calcula contagem de requisições, erros e latência média; esses valores ficam em memória.
 
-Há timeout de dez segundos no encaminhamento do Middleware para Orders e de cinco segundos nas chamadas de Orders para Inventory. Na publicação de eventos, Orders tenta se conectar ao RabbitMQ até cinco vezes, com intervalo fixo de dois segundos. Esse retry não utiliza backoff exponencial.
+Há timeout configurável no encaminhamento do Middleware para Orders, definido em 60 segundos no Docker Compose, e timeout de cinco segundos por chamada de Orders para Inventory. Na publicação de eventos, Orders tenta se conectar ao RabbitMQ até cinco vezes, com backoff exponencial de 0,5, 1, 2 e 4 segundos entre tentativas. Esses parâmetros podem ser ajustados por variáveis de ambiente.
 
 ## 5. Consistência e comportamento em falhas
 
